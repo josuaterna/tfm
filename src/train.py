@@ -6,8 +6,7 @@ from indicadores import Indicadores_tecnicos
 from numpy.lib.stride_tricks import sliding_window_view
 
 class Trainer:
-    def __init__(self, modelo, indicadores):
-        self.tipo_modelo = modelo
+    def __init__(self, indicadores):
         self.obj_indicadores = Indicadores_tecnicos(indicadores)
         self.obj_datamanager = Datamanager()
 

@@ -1,20 +1,29 @@
 import sys
 import os
+import pandas as pd
 from datetime import datetime
-from src.train import Trainer
-from
 
-def entrenamiento(modelo, indicadores, fecha_ini, fecha_fin, ventana_historica, actualizacion):
-    entrenador = Trainer(modelo, indicadores, fecha_ini, fecha_fin, ventana_historica, actualizacion)
-    X, y = entrenador.preparar_datos()
+from tipos.lstm import LSTM_class
+from tipos.randomf import RandomF_class
+from tipos.svm_nn import SVM_NN_class
 
+def entrenamiento(modelo, simbolo, indicadores, fecha_ini, fecha_fin):
+    if modelo == "lstm":
+        obj_lstm = LSTM_class(indicadores)
+        obj_lstm.lstm_train(simbolo, indicadores, fecha_ini, fecha_fin)
+
+
+
+        
 
 
     
     
 def seniales_back(modelo, indicadores, fecha_ini, fecha_fin, ventana_historica, actualizacion):
+    pass
 
 def seniales_tr(modelo, indicadores, ventana_historica, actualizacion):
+    pass
 
 
 def select_modelo():
@@ -59,26 +68,22 @@ def select_indicadores():
 
 def main():
     modelo = select_modelo()
-    ventana_historica = None
-    actualizacion = None
-    if modelo == "lstm":
-        ventana_historica = int(input("Ventana histórica (días): ").strip())
-        actualizacion = int(input("Periodo de actualización (días): ").strip())
+    accion = select_accion()
     if accion != 3:
         print(f"\nFecha actual: {datetime.now().strftime('%Y-%m-%d')}")
         fecha_ini = input("Fecha inicio (YYYY-MM-DD): ").strip()
         fecha_fin = input("Fecha fin (YYYY-MM-DD): ").strip()
 
-    accion = select_accion()
+    simbolo = select_simbolo()
     indicadores = select_indicadores()
     if accion == 1:
-        entrenamiento(modelo, indicadores, fecha_ini, fecha_fin, ventana_historica, actualizacion)
+        entrenamiento(modelo, simbolo, indicadores, fecha_ini, fecha_fin)
     elif accion == 2:
-        seniales_back(modelo, indicadores, fecha_ini, fecha_fin, ventana_historica, actualizacion)
+        seniales_back(modelo, simbolo, indicadores, fecha_ini, fecha_fin)
     elif accion == 3:
-        seniales_tr(modelo, indicadores, ventana_historica, actualizacion)
+        seniales_tr(modelo, simbolo, indicadores, ventana_historica)
     elif accion == 4:
-        seniales_tr(modelo, indicadores, fecha_ini, fecha_fin, ventana_historica, actualizacion)        
+        seniales_tr(modelo, simbolo, indicadores, fecha_ini, fecha_fin)        
     else:
         return
 
