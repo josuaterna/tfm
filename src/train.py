@@ -1,8 +1,8 @@
 import os
 import json
 import numpy as np
-from data_manager import Datamanager
-from indicadores import Indicadores_tecnicos
+from src.data_manager import Datamanager
+from src.indicadores import Indicadores_tecnicos
 from numpy.lib.stride_tricks import sliding_window_view
 
 class Trainer:

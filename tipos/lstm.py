@@ -5,27 +5,30 @@ import pandas as pd
 import numpy as np
 import joblib  
 import os
-import pywt
+import pywt # type: ignore
 import torch.nn as nn
 from typing import Tuple
 from datetime import datetime, timedelta
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from src.train import Trainer
 from torch.utils.data import Dataset, DataLoader
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from src.train import Trainer
 
 class LSTM_class():
-    def __init__(self, indicadores):
+    def __init__(self, indicadores, simbolo):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.entrenador = Trainer(indicadores)
         self.model = None
         self.scaler = None
         self.seq_len = 50
+        self.simbolo = simbolo
 
     def lstm_train(self, simbolo, fecha_ini, fecha_fin):
-        ventana_historica = int(input("Ventana histórica (días): ").strip())
-        actualizacion = int(input("Periodo de actualización (días): ").strip())
+        # ventana_historica = int(input("Ventana histórica (días): ").strip())
+        ventana_historica = 30
+        # actualizacion = int(input("Periodo de actualización (días): ").strip())
+        actualizacion = 7
         start_date, end_date = pd.to_datetime(fecha_ini), pd.to_datetime(fecha_fin)
         hist_start = start_date - timedelta(days=ventana_historica)
         all_signals = []
@@ -62,9 +65,8 @@ class LSTM_class():
             current_test_start = current_test_end
 
         # Guardar resultados
-        output_file = f"signals_backtest_{self.symbol}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        output_file = f"real_backtest_signals_{self.simbolo}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         with open(output_file, "w", encoding="utf-16-le") as f:
-            #json.dump(all_signals, f, indent=4, ensure_ascii=False)
             json.dump(all_signals, f, indent=2)
 
         print(f"\n✅ Backtest terminado. Total señales: {len(all_signals)}")
@@ -116,7 +118,7 @@ class LSTM_class():
                         "signal": int(signal),
                         "confidence": float(confidence),
                         "price": float(df["close"].iloc[i+self.seq_len]),
-                        "symbol": self.symbol
+                        "symbol": self.simbolo
                     })
         return signals
     
@@ -206,7 +208,7 @@ class LSTM_class():
                 }, "best_lstm_wavelet.pth")
         return model, scaler
     
-    def create_sequences(X: np.ndarray, y: np.ndarray, seq_len:int=50) -> Tuple[np.ndarray, np.ndarray]:
+    def create_sequences(self, X: np.ndarray, y: np.ndarray, seq_len:int=50) -> Tuple[np.ndarray, np.ndarray]:
         """
         Build sliding windows: for i in [seq_len-1 .. len(X)-1] -> window X[i-seq_len+1:i+1], label y[i]
         """
@@ -224,7 +226,7 @@ class LSTM_class():
                                  add_features=True) -> pd.DataFrame:
         close = df['close'].values
         # Eliminar ruido de la serie usando wavelets:
-        denoised = self.wavelet_denoise_series(close, wavelet=wavelet, level=level)
+        denoised = self.wavelet_denoise_series(close, wavelet, level)
         features_nobin = pd.DataFrame(index=df.index)
         features_bin = pd.DataFrame(index=df.index)
         features = pd.DataFrame(index=df.index)
@@ -245,7 +247,7 @@ class LSTM_class():
         features = features.bfill().fillna(0)
         return features
 
-    def wavelet_denoise_series(series: np.ndarray, wavelet='db4', level=1) -> np.ndarray:
+    def wavelet_denoise_series(self, series: np.ndarray, wavelet, level) -> np.ndarray:
 
         coeffs = pywt.wavedec(series, wavelet, mode='symmetric')
         # soft thresholding for detail coefficients
@@ -257,7 +259,7 @@ class LSTM_class():
         rec = pywt.waverec(denoised_coeffs, wavelet, mode='symmetric')
         return rec[:len(series)]
 
-    def create_labels_from_prices(prices: pd.Series, future_bars:int=5, threshold:float=0.0001) -> np.ndarray:
+    def create_labels_from_prices(self, prices: pd.Series, future_bars, threshold) -> np.ndarray:
         future = prices.shift(-future_bars)
         future_return = (future - prices) / prices
         labels = np.zeros(len(prices), dtype=int)
