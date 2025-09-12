@@ -94,7 +94,7 @@ def select_indicadores():
 
 def main():
     #modelo = select_modelo()
-    modelo = "svm_nn"
+    modelo = "lstm"
     #accion = select_accion()
     accion = 1
     print(f"Línea {inspect.currentframe().f_lineno}")
@@ -102,8 +102,8 @@ def main():
         print(f"\nFecha actual: {datetime.now().strftime('%Y-%m-%d')}")
         # fecha_ini = input("Fecha inicio (YYYY-MM-DD): ").strip()
         # fecha_fin = input("Fecha fin (YYYY-MM-DD): ").strip()
-        fecha_ini = "2025-06-01"
-        fecha_fin = "2025-07-31"
+        fecha_ini = "2025-01-01"
+        fecha_fin = "2025-03-31"
     print(f"Línea {inspect.currentframe().f_lineno}")
     #simbolo = select_simbolo()
     simbolo = "NQ"

@@ -69,7 +69,7 @@ class SVM_NN_class():
 
 class NeuralSVMModel(nn.Module):
     
-    def __init__(self, input_dim, hidden_dim=64, dropout=0.2, margin=1.0):
+    def __init__(self, input_dim, hidden_dim=64, dropout=0.4, margin=1.0):
         super().__init__()
         self.margin = margin
         self.classifier = nn.Linear(32, 3)
@@ -79,6 +79,7 @@ class NeuralSVMModel(nn.Module):
         self.label_map = {-1: 0, 0: 1, 1: 2}
         self.reverse_map = {0: -1, 1: 0, 2: 1}
         self.scaler = StandardScaler()
+        self.to(self.device)
         self.feature_layers = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
             nn.ReLU(),
@@ -88,12 +89,12 @@ class NeuralSVMModel(nn.Module):
             nn.Dropout(dropout * 0.5),
             nn.Linear(hidden_dim // 2, 32),
             nn.ReLU()
-        )
+        ).to(self.device)
 
     def forward(self, x):
         features = self.feature_layers(x)
         logits = self.classifier(features)
-        probs = F.softmax(self.probability_layer(features), dim=1).to(self.device)
+        probs = F.softmax(self.probability_layer(features), dim=1)
         return logits, probs, features
     
     def svm_loss(self, logits, targets):
@@ -110,7 +111,6 @@ class NeuralSVMModel(nn.Module):
     
     def fit(self, X, y, epochs=100, lr=0.001, batch_size=32, validation_split=0.2, return_history=False):
         print(f"Entrenando Neural-SVM con {len(X)} muestras...")
-        
         X_scaled = self.scaler.fit_transform(X)
         y_mapped = np.array([self.label_map[label] for label in y])
         

@@ -25,7 +25,7 @@ class LSTM_class():
 
     def lstm_train(self, simbolo, fecha_ini, fecha_fin):
         # ventana_historica = int(input("Ventana histórica (días): ").strip())
-        ventana_historica = 60
+        ventana_historica = 15
         # actualizacion = int(input("Periodo de actualización (días): ").strip())
         actualizacion = 7
         start_date, end_date = pd.to_datetime(fecha_ini), pd.to_datetime(fecha_fin)
@@ -134,6 +134,8 @@ class LSTM_class():
         # scale features (fit on train split later)
         # Build sequences
         X_seq, y_seq = self.create_sequences(X, y, seq_len=seq_len)
+        X_seq, y_seq = self.create_sequences(X,)
+
         # drop samples where label is 0 if you prefer binary (here keep all classes)
         # split by indices to avoid leakage
         idx = np.arange(len(X_seq))
