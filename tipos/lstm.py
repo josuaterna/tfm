@@ -16,17 +16,16 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from src.train import Trainer
 
 class LSTM_class():
-    def __init__(self, indicadores, simbolo):
+    def __init__(self, indicadores):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.entrenador = Trainer(indicadores)
         self.model = None
         self.scaler = None
         self.seq_len = 50
-        self.simbolo = simbolo
 
     def lstm_train(self, simbolo, fecha_ini, fecha_fin):
         # ventana_historica = int(input("Ventana histórica (días): ").strip())
-        ventana_historica = 30
+        ventana_historica = 60
         # actualizacion = int(input("Periodo de actualización (días): ").strip())
         actualizacion = 7
         start_date, end_date = pd.to_datetime(fecha_ini), pd.to_datetime(fecha_fin)
@@ -57,7 +56,7 @@ class LSTM_class():
             # Reentrenar modelo
             self.train_model(df_train, window_days=ventana_historica, verbose=False)    
             
-            signals = self.generate_signals(df_test)
+            signals = self.generate_signals(df_test,simbolo)
             all_signals.extend(signals)
             print(f"✔ Bloque {current_test_start.date()} → {current_test_end.date()} ({len(signals)} señales)")
 
@@ -65,7 +64,7 @@ class LSTM_class():
             current_test_start = current_test_end
 
         # Guardar resultados
-        output_file = f"real_backtest_signals_{self.simbolo}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        output_file = f"real_backtest_signals_{simbolo}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         with open(output_file, "w", encoding="utf-16-le") as f:
             json.dump(all_signals, f, indent=2)
 
@@ -88,7 +87,7 @@ class LSTM_class():
             epochs=epochs, batch_size=batch_size,
             device=self.device, verbose=verbose
         )
-    def generate_signals(self, df, confidence_threshold=0.6):
+    def generate_signals(self, df, simbolo, confidence_threshold=0.6):
         """
         Genera señales sobre un dataframe de precios.
         """
@@ -118,7 +117,7 @@ class LSTM_class():
                         "signal": int(signal),
                         "confidence": float(confidence),
                         "price": float(df["close"].iloc[i+self.seq_len]),
-                        "symbol": self.simbolo
+                        "symbol": simbolo
                     })
         return signals
     
@@ -209,9 +208,6 @@ class LSTM_class():
         return model, scaler
     
     def create_sequences(self, X: np.ndarray, y: np.ndarray, seq_len:int=50) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Build sliding windows: for i in [seq_len-1 .. len(X)-1] -> window X[i-seq_len+1:i+1], label y[i]
-        """
         seq_X = []
         seq_y = []
         N = len(X)

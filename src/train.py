@@ -20,7 +20,7 @@ class Trainer:
             return None, None
         features = self.obj_indicadores.get_feature_matrix(df)
         features.to_csv("features.csv", index=True)
-        labels = self.crear_labels(df, future_bars=20)
+        labels = self.crear_labels(df, velas_futuro=20)
         labels.to_csv("labels.csv", index=True)
         self._check_label_balance(labels)
         

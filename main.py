@@ -8,14 +8,21 @@ from tipos.randomf import RandomF_class
 from tipos.svm_nn import SVM_NN_class
 
 def entrenamiento(modelo, simbolo, indicadores, fecha_ini, fecha_fin):
-    print(f"Línea {inspect.currentframe().f_lineno}")
     if modelo == "lstm":
-        obj_lstm = LSTM_class(indicadores. simbolo)
+        obj_lstm = LSTM_class(indicadores)
         obj_lstm.lstm_train(simbolo, fecha_ini, fecha_fin)
-    elif modelo == "random":
-        obj_randomf = RandomF_class(indicadores, simbolo)
+    elif modelo == "randomf":
+        obj_randomf = RandomF_class(indicadores)
         obj_randomf.randomf_train(simbolo, fecha_ini, fecha_fin)
-        
+    elif modelo == "svm_nn":
+        obj_svmnn = SVM_NN_class(indicadores, hidden_dim=64, dropout=0.2, margin=1.0)
+        obj_svmnn.svmnn_train(simbolo, fecha_ini, fecha_fin)
+        print(f"\nFechas para backtesting: {datetime.now().strftime('%Y-%m-%d')}")
+        # fecha_ini = input("Fecha inicio (YYYY-MM-DD): ").strip()
+        # fecha_fin = input("Fecha fin (YYYY-MM-DD): ").strip()
+        fecha_ini_back = "2025-08-01"
+        fecha_fin_back = "2025-08-31"
+        obj_svmnn.generar_json_senales(obj_svmnn.model, simbolo, fecha_ini_back, fecha_fin_back)
 
   
 def seniales_back(modelo, indicadores, fecha_ini, fecha_fin, ventana_historica, actualizacion):
@@ -32,6 +39,7 @@ def select_modelo():
         modelo = "randomf"
     elif select == 2:
         modelo = "svm_nn"
+
     elif select == 3:
         modelo = "lstm"
     else:
@@ -86,7 +94,7 @@ def select_indicadores():
 
 def main():
     #modelo = select_modelo()
-    modelo = "lstm"
+    modelo = "svm_nn"
     #accion = select_accion()
     accion = 1
     print(f"Línea {inspect.currentframe().f_lineno}")
@@ -95,7 +103,7 @@ def main():
         # fecha_ini = input("Fecha inicio (YYYY-MM-DD): ").strip()
         # fecha_fin = input("Fecha fin (YYYY-MM-DD): ").strip()
         fecha_ini = "2025-06-01"
-        fecha_fin = "2025-08-31"
+        fecha_fin = "2025-07-31"
     print(f"Línea {inspect.currentframe().f_lineno}")
     #simbolo = select_simbolo()
     simbolo = "NQ"
