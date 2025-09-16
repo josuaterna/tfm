@@ -90,6 +90,7 @@ class NeuralSVMModel(nn.Module):
             nn.Linear(hidden_dim // 2, 32),
             nn.ReLU()
         ).to(self.device)
+ 
 
     def forward(self, x):
         features = self.feature_layers(x)

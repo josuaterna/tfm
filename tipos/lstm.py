@@ -7,11 +7,14 @@ import joblib
 import os
 import pywt # type: ignore
 import torch.nn as nn
+import matplotlib.pyplot as plt
 from typing import Tuple
 from datetime import datetime, timedelta
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, TensorDataset
 from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error, mean_absolute_error
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from src.train import Trainer
 
@@ -19,34 +22,35 @@ class LSTM_class():
     def __init__(self, indicadores):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.entrenador = Trainer(indicadores)
+        self.df_train = None
         self.model = None
         self.scaler = None
         self.seq_len = 50
 
     def lstm_train(self, simbolo, fecha_ini, fecha_fin):
         # ventana_historica = int(input("Ventana histórica (días): ").strip())
-        ventana_historica = 15
+        ventana_historica = 30
         # actualizacion = int(input("Periodo de actualización (días): ").strip())
-        actualizacion = 7
+        actualizacion = 1
         start_date, end_date = pd.to_datetime(fecha_ini), pd.to_datetime(fecha_fin)
         hist_start = start_date - timedelta(days=ventana_historica)
         all_signals = []
         current_train_end = start_date - timedelta(minutes=5)
         current_test_start = start_date
-        df_full = self.entrenador.obj_datamanager.get_data(
+        self.df_train = self.entrenador.obj_datamanager.get_data(
             simbolo,
             hist_start.strftime("%Y-%m-%d"),
             end_date.strftime("%Y-%m-%d"),
             timeframe="M5"
         )
-        if df_full is None or len(df_full) < 500:
+        if self.df_train is None or len(self.df_train) < 500:
             print("ERROR: Insuficientes datos")
             return
         while current_test_start < end_date:
             current_test_end = min(current_test_start + timedelta(days=actualizacion), end_date)
 
-            df_train = df_full.loc[current_train_end - timedelta(days=ventana_historica):current_train_end]
-            df_test = df_full.loc[current_test_start:current_test_end]
+            df_train = self.df_train.loc[current_train_end - timedelta(days=ventana_historica):current_train_end]
+            df_test = self.df_train.loc[current_test_start:current_test_end]
 
             if len(df_train) < 500 or len(df_test) < 100:
                 print(f"ERROR: Datos insuficientes en {current_test_start} → {current_test_end}")
@@ -54,7 +58,7 @@ class LSTM_class():
                 current_test_start = current_test_end
                 continue
             # Reentrenar modelo
-            self.train_model(df_train, window_days=ventana_historica, verbose=False)    
+            self.train_model(df_train, window_days=ventana_historica, batch_size=16, verbose=False)    
             
             signals = self.generate_signals(df_test,simbolo)
             all_signals.extend(signals)
@@ -77,7 +81,7 @@ class LSTM_class():
         df = df.tail(window_days * 288)  # 288 velas M5 ≈ 1 día
         features = self.build_feature_matrix_from_df(df)
         labels = self.create_labels_from_prices(df['close'], future_bars=5, threshold=0.0001)
-
+        
         if len(features) != len(labels):
             features, labels = features.align(pd.Series(labels, index=features.index), join="inner", axis=0)
 
@@ -87,6 +91,20 @@ class LSTM_class():
             epochs=epochs, batch_size=batch_size,
             device=self.device, verbose=verbose
         )
+
+    def guardar(self, modelo, scaler):
+        torch.save(modelo.state_dict(), "lstm_model.pth")
+        joblib.dump(scaler, "scaler.pkl")
+
+    def cargar(self, modelo = "lstm_model.pth", scaler = "scaler.pkl"):
+        self.scaler = joblib.load(scaler)
+        # Cargar modelo
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.model = LSTMClassifier_ii(input_dim=1, output_dim=1, device=self.device).to(self.device)
+        # Cargar pesos al modelo
+        self.model.load_state_dict(torch.load(modelo, map_location=self.device))
+        self.model.eval()
+        
     def generate_signals(self, df, simbolo, confidence_threshold=0.6):
         """
         Genera señales sobre un dataframe de precios.
@@ -134,8 +152,6 @@ class LSTM_class():
         # scale features (fit on train split later)
         # Build sequences
         X_seq, y_seq = self.create_sequences(X, y, seq_len=seq_len)
-        X_seq, y_seq = self.create_sequences(X,)
-
         # drop samples where label is 0 if you prefer binary (here keep all classes)
         # split by indices to avoid leakage
         idx = np.arange(len(X_seq))
@@ -213,6 +229,7 @@ class LSTM_class():
         seq_X = []
         seq_y = []
         N = len(X)
+        print(f"len(X) {len(X)}")
         for i in range(seq_len-1, N):
             seq_X.append(X[i-seq_len+1:i+1])
             seq_y.append(y[i])
@@ -265,7 +282,255 @@ class LSTM_class():
         labels[future_return < -threshold] = -1
         # Las últimas barras no pueden ser etiquetadas y quedan en 0
         return labels
+
+    def lstm_train_ii(self, simbolo, fecha_ini, fecha_fin):        
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
+        # --------------------------
+        # 1) cargar serie raw (sin escalar aún)
+        # --------------------------
+        self.df_train = self.entrenador.obj_datamanager.get_data(simbolo, fecha_ini, fecha_fin)
+        series = self.df_train['close'].values.reshape(-1, 1)   # (N, 1)
+        seq_len = 50
+
+        if len(series) <= seq_len + 1:
+            raise ValueError("Serie demasiado corta para seq_len")
+
+        # --------------------------
+        # 2) split temporal en RAW (no en secuencias)
+        #    -> esto evita mezcla aleatoria de ventanas
+        # --------------------------
+        train_size = int(len(series) * 0.8)   # 80% tiempo para entrenamiento
+        # opcional: definir test_size y val_size si lo deseas
+        # train_raw = series[:train_size]
+        # val_raw   = series[train_size:]
+
+        # --------------------------
+        # 3) scaler: FIT solo con train_raw, luego TRANSFORM toda la serie
+        # --------------------------
+        scaler = MinMaxScaler(feature_range=(0, 1))
+        scaler.fit(series[:train_size])              # <- fit SOLO en train
+        scaled_full = scaler.transform(series)       # <- transform de toda la serie con el scaler ajustado en train
+
+        # --------------------------
+        # 4) crear secuencias a partir de la serie escalada (sliding windows)
+        # --------------------------
+        X, y = self.create_sequences_ii(scaled_full, seq_len)   # X.shape = (N-seq_len, seq_len, features)
+        print("X,y shapes (total):", X.shape, y.shape)
+
+        # --------------------------
+        # 5) SPLIT de secuencias de forma CONTIGUA (temporal)
+        #    calculamos el índice correcto para que las secuencias de train terminen
+        #    exactamente en train_size-1 del raw original
+        # --------------------------
+        split_idx = train_size - seq_len
+        print("df index min/max:", self.df_train.index.min(), self.df_train.index.max())
+        print("train_size:", train_size, "split_idx:", split_idx)
+        print("y (scaled) stats -> min/max/mean/std:", y.min(), y.max(), y.mean(), y.std())
+
+        if split_idx <= 0:
+            raise ValueError("train_size demasiado pequeño respecto a seq_len")
+
+        x_train, y_train = X[:split_idx], y[:split_idx]
+        x_val,   y_val   = X[split_idx:], y[split_idx:]
+        print(f"y_train = min {y_train.min()}, max {y_train.max()}")
+        print("x_train, x_val shapes:", x_train.shape, x_val.shape)
+
+
+        # --------------------------
+        # 6) tensores y DataLoaders (batch_size=1 si quieres reproducir Keras)
+        # --------------------------
+        x_train_t = torch.tensor(x_train, dtype=torch.float32).to(device)
+        y_train_t = torch.tensor(y_train, dtype=torch.float32).to(device)
+        x_val_t   = torch.tensor(x_val,   dtype=torch.float32).to(device)
+        y_val_t   = torch.tensor(y_val,   dtype=torch.float32).to(device)
+
+        train_dataset = TensorDataset(x_train_t, y_train_t)
+        val_dataset   = TensorDataset(x_val_t,   y_val_t)
+
+        train_loader = DataLoader(train_dataset, batch_size=30, shuffle=True)   # shuffle ok SOLO en training
+        val_loader   = DataLoader(val_dataset,   batch_size=30, shuffle=False)
+
+        # --------------------------
+        # 7) modelo, optim, loss, early stopping (igual a tu código)
+        # --------------------------
+        modelo = LSTMClassifier_ii().to(device)
+        next(modelo.parameters()).device
+        criterion = nn.MSELoss()
+        optimizer = torch.optim.Adam(modelo.parameters(), lr=0.001)
+        early_stopping = EarlyStopping(patience=10, restore_best_weights=True)
+
+        # --------------------------
+        # 8) loop de entrenamiento (igual que antes)
+        # --------------------------
+        epochs = 10
+        for epoch in range(epochs):
+            modelo.train()
+            train_losses = []
+            for X_batch, y_batch in train_loader:
+                X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+                optimizer.zero_grad()
+                outputs = modelo(X_batch)
+                loss = criterion(outputs, y_batch.view(-1, 1))
+                loss.backward()
+                optimizer.step()
+                outputs_np = outputs.detach().cpu().numpy()
+                y_batch_np = y_batch.detach().cpu().numpy()
+                # Reescalar a precios reales
+                outputs_rescaled = scaler.inverse_transform(outputs_np.reshape(-1, 1))
+                y_rescaled = scaler.inverse_transform(y_batch_np.reshape(-1, 1))
+                # Calcular MSE en precios reales (fuera del grafo)
+                loss_val = mean_squared_error(y_rescaled, outputs_rescaled)
+                #train_losses.append(loss.item())
+                train_losses.append(loss_val)  # aquí guardas el loss en escala real solo para monitoreo
+            avg_train_loss = sum(train_losses) / len(train_losses)
+            print(f"Epoch: {epoch} MSE {avg_train_loss}")
+            modelo.eval()
+            val_losses = []
+            
+            with torch.no_grad():
+                for X_batch, y_batch in val_loader:
+                    val_outputs = modelo(X_batch)
+                    val_loss = criterion(val_outputs, y_batch)
+                    val_losses.append(val_loss.item())
+
+            avg_val_loss = sum(val_losses) / len(val_losses)
+            print(f"Epoch {epoch+1}, Train Loss: {avg_train_loss:.6f}, Val Loss: {avg_val_loss:.6f}")
+
+            if early_stopping.step(avg_val_loss, modelo):
+                break
+            print("\n--- Baseline vs Modelo (validación) ---")
+
+            # Baseline: persistencia (último valor de la ventana)
+            persistence_scaled = x_val[:, -1, 0].reshape(-1,1)   # último valor de cada ventana
+            persistence_real = scaler.inverse_transform(persistence_scaled)
+            y_val_real = scaler.inverse_transform(y_val.reshape(-1,1))
+
+            rmse_persistence = np.sqrt(mean_squared_error(y_val_real, persistence_real))
+            mae_persistence  = mean_absolute_error(y_val_real, persistence_real)
+            print("Baseline persistence RMSE (precio):", rmse_persistence, "MAE:", mae_persistence)
+
+            # Modelo en validación
+            modelo.eval()
+            with torch.no_grad():
+                preds_scaled = modelo(torch.tensor(x_val, dtype=torch.float32).to(device)).cpu().numpy().reshape(-1,1)
+
+            preds_real = scaler.inverse_transform(preds_scaled)
+            rmse_model = np.sqrt(mean_squared_error(y_val_real, preds_real))
+            mae_model  = mean_absolute_error(y_val_real, preds_real)
+            print("Model RMSE (precio):", rmse_model, "MAE:", mae_model)
+
+        # --------------------------
+        # 9) guardar scaler y modelo si quieres
+        # --------------------------
+        torch.save(modelo.state_dict(), "lstm_model.pth")
+        joblib.dump(scaler, "scaler.pkl")
     
+    def create_sequences_ii(self, data, seq_len=50):
+        X, y = [], []
+        for i in range(seq_len, len(data)):
+            X.append(data[i-seq_len:i])   # secuencia de precios
+            y.append(data[i, 0])          # valor objetivo (ej: próximo cierre)
+        return np.array(X), np.array(y)
+    
+    def forecast_future_range(self, model, df, scaler, fecha_pred_ini, fecha_pred_fin, seq_len=50, device="cpu", verbose=True):
+        """
+        Versión corregida y robusta:
+        - Usa train_end = fecha_pred_ini - offset para construir la ventana inicial
+        - Comprueba que el scaler corresponde al entrenamiento
+        - Mantiene la entrada al modelo en escala normalizada y solo des-normaliza para graficar
+        """
+        model.eval()
+
+        # 1) detectar freq
+        freq = pd.infer_freq(df.index)
+        if freq is None:
+            diffs = df.index.to_series().diff().dropna()
+            mode = diffs.mode()
+            if len(mode) == 0:
+                raise ValueError("No puedo inferir frecuencia del índice.")
+            offset = mode[0]
+        else:
+            offset = pd.tseries.frequencies.to_offset(freq)
+
+        # Prueba rápida del modelo en la ventana inicial:
+        ultimos = df.loc[:pd.to_datetime(fecha_pred_ini) - pd.Timedelta(1, unit=freq)][-seq_len:]['close'].values.reshape(-1,1)
+        scaled = scaler.transform(ultimos)
+        X_test = torch.tensor(scaled.reshape(1, seq_len, 1), dtype=torch.float32).to(device)
+        with torch.no_grad():
+            out = model(X_test).cpu().numpy()
+        print("sample model output (scaled):", out, " -> descaled:", scaler.inverse_transform(np.array(out).reshape(-1,1)).ravel())
+
+        # Fin prueba
+        
+        fecha_pred_ini = pd.to_datetime(fecha_pred_ini)
+        fecha_pred_fin = pd.to_datetime(fecha_pred_fin)
+        train_end = fecha_pred_ini - offset
+
+        if verbose:
+            print("freq:", freq, "offset:", offset)
+            print("train_end (última obs usada para generar forecast):", train_end)
+
+        # 2) comprobar que existen suficientes datos anteriores a train_end
+        if df.index[df.index < fecha_pred_ini].empty:
+            raise ValueError("No hay datos anteriores a fecha_pred_ini en el df.")
+        # usar sólo datos hasta train_end para construir la ventana inicial
+        train_df = df.loc[:train_end]
+        if len(train_df) < seq_len:
+            raise ValueError(f"No hay suficientes observaciones hasta {train_end} para seq_len={seq_len}")
+
+        # 3) comprobar tipo de scaler (diagnóstico)
+        if verbose:
+            print("Scaler type:", type(scaler))
+            if hasattr(scaler, "min_"):
+                print("scaler.data_min_ (first 3):", getattr(scaler, "data_min_", None))
+                print("scaler.data_max_ (first 3):", getattr(scaler, "data_max_", None))
+
+        # 4) construir ventana inicial en ESCALA normalizada (lista de floats)
+        ultimos_precios = train_df['close'].values[-seq_len:].reshape(-1, 1)
+        scaled_window = scaler.transform(ultimos_precios).flatten().tolist()  # lista de floats
+
+        # 5) preparar fechas/pasos
+        fechas_futuras = pd.date_range(start=fecha_pred_ini, end=fecha_pred_fin, freq=freq)
+        pasos = len(fechas_futuras)
+        if pasos <= 0:
+            raise ValueError("El rango de fechas no genera pasos futuros válidos.")
+
+        preds = []
+
+        # 6) bucle predictivo (auto-regresivo)
+        for step in range(pasos):
+            # Entrada con la forma correcta: (1, seq_len, 1)
+            X_input = torch.tensor(scaled_window[-seq_len:], dtype=torch.float32).view(1, seq_len, 1).to(device)
+
+            with torch.no_grad():
+                 pred_scaled = model(X_input).cpu().numpy()  # shape (1,1) o (1,) según modelo
+
+            # Asegurarnos formato (1,1)
+            pred_scaled = np.array(pred_scaled).reshape(1, 1)
+
+            # Desnormalizar SOLO para almacenar/plot (no para alimentar)
+            pred_scaled = np.clip(pred_scaled, 0.0, 1.0)
+            pred_real = scaler.inverse_transform(pred_scaled)[0, 0]
+            preds.append(pred_real)
+
+            # Alimentar la siguiente ventana CON la predicción en escala normalizada
+            scaled_window.append(float(pred_scaled[0, 0]))
+
+            if verbose and step < 5:
+                print(f"step {step}: pred_scaled={pred_scaled[0,0]:.6f}, pred_real={pred_real:.6f}")
+
+        # 7) construir DataFrame y graficar (histórico hasta train_end)
+        df_preds = pd.DataFrame({"fecha": fechas_futuras, "prediccion": preds}).set_index("fecha")
+
+        plt.figure(figsize=(12,6))
+        df.loc[:train_end]['close'].tail(200).plot(label="Histórico (hasta corte)", color="blue")
+        df_preds['prediccion'].plot(label="Pronóstico", color="red", linestyle="--")
+        plt.axvline(train_end, color="gray", linestyle="dashed", label="Corte (train_end)")
+        plt.title(f"Forecast desde {fecha_pred_ini} hasta {fecha_pred_fin}")
+        plt.xlabel("Fecha"); plt.ylabel("Precio"); plt.legend(); plt.show()
+
+        return df_preds
 
 class LSTMClassifier(nn.Module):
     def __init__(self, n_features:int, hidden_size=64, n_layers=2, dropout=0.2, num_classes=3):
@@ -293,3 +558,63 @@ class SequenceDataset(Dataset):
     def __len__(self): return len(self.X)
     def __getitem__(self, idx):
         return self.X[idx], self.y[idx] + 1  # remap: -1->0,0->1,1->2
+    
+# Predicción de precios
+class LSTMClassifier_ii(nn.Module):
+    def __init__(self, input_dim=1, hidden_dim=128, output_dim=1, dropout=0.2, device="cpu"):
+        super(LSTMClassifier_ii, self).__init__()
+        self.device = device
+        # LSTM con 2 capas (128 y 64 unidades como en tu Keras)
+        self.lstm1 = nn.LSTM(input_size=input_dim, hidden_size=hidden_dim, batch_first=True, dropout=0, num_layers=1)
+        self.lstm2 = nn.LSTM(input_size=hidden_dim, hidden_size=64, batch_first=True, dropout=dropout, num_layers=1)
+        # Capa fully connected equivalente a Dense(25) y Dense(1)
+        self.fc1 = nn.Linear(64, 25)
+        self.fc2 = nn.Linear(25, output_dim)
+
+    def forward(self, x):
+        # LSTM devuelve (output, (h_n, c_n))
+        out, _ = self.lstm1(x)
+        out, (hn, cn) = self.lstm2(out)
+        # Como return_sequences=False en la última capa de Keras → usar la última salida
+        out = out[:, -1, :]  # última capa oculta
+        # Pasar por las capas fully connected
+        out = torch.relu(self.fc1(out))
+        #out = self.fc2(out)
+        #out = torch.sigmoid(self.fc2(torch.relu(self.fc1(out))))
+        out = torch.sigmoid(self.fc2(out)) # (batch, 1), en [0,1]
+        return out
+
+class TimeSeriesDataset(Dataset):
+    def __init__(self, X, y):
+        self.X = torch.tensor(X, dtype=torch.float32)
+        self.y = torch.tensor(y, dtype=torch.float32)
+
+    def __len__(self):
+        return len(self.X)
+
+    def __getitem__(self, idx):
+        return self.X[idx], self.y[idx]
+    
+class EarlyStopping:
+    def __init__(self, patience=10, restore_best_weights=True):
+        self.patience = patience
+        self.restore_best_weights = restore_best_weights
+        self.best_loss = np.inf
+        self.counter = 0
+        self.best_state = None
+
+    def step(self, val_loss, model):
+        if val_loss < self.best_loss:  # mejora
+            self.best_loss = val_loss
+            self.counter = 0
+            if self.restore_best_weights:
+                self.best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+        else:
+            self.counter += 1
+
+        if self.counter >= self.patience:
+            print("⏹️ Early stopping triggered")
+            if self.restore_best_weights and self.best_state is not None:
+                model.load_state_dict(self.best_state)
+            return True  # detener entrenamiento
+        return False

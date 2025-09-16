@@ -2,15 +2,31 @@ import sys
 import os
 import pandas as pd
 import inspect
+import torch
+from tipos.lstm2 import train_and_save_returns, load_and_forecast_returns
 from datetime import datetime
 from tipos.lstm import LSTM_class
+from tipos.lstm2 import LSTMReturns
 from tipos.randomf import RandomF_class
 from tipos.svm_nn import SVM_NN_class
+import torch.nn as nn
 
 def entrenamiento(modelo, simbolo, indicadores, fecha_ini, fecha_fin):
     if modelo == "lstm":
-        obj_lstm = LSTM_class(indicadores)
-        obj_lstm.lstm_train(simbolo, fecha_ini, fecha_fin)
+        obj = LSTM_class(indicadores)
+        #fecha_pred_ini = "2025-09-01 00:00:00"
+        #fecha_pred_fin = "2025-09-10 23:59:00"
+        #obj.cargar()
+        obj.lstm_train(simbolo,fecha_ini, fecha_fin)
+        #df = obj.entrenador.obj_datamanager.get_data(simbolo,fecha_ini,fecha_fin)
+        # Entrenar
+        #model, sp, sr = train_and_save_returns(df, "NQ", seq_len=50, epochs=30, batch_size=32)
+
+        # Forecast
+        #df_preds = load_and_forecast_returns(df, "NQ", fecha_pred_ini, fecha_pred_fin, seq_len=50)  
+        #df_preds.info()
+        
+
     elif modelo == "randomf":
         obj_randomf = RandomF_class(indicadores)
         obj_randomf.randomf_train(simbolo, fecha_ini, fecha_fin)
@@ -26,6 +42,7 @@ def entrenamiento(modelo, simbolo, indicadores, fecha_ini, fecha_fin):
 
   
 def seniales_back(modelo, indicadores, fecha_ini, fecha_fin, ventana_historica, actualizacion):
+
     pass
 
 def seniales_tr(modelo, indicadores, ventana_historica, actualizacion):
@@ -102,8 +119,8 @@ def main():
         print(f"\nFecha actual: {datetime.now().strftime('%Y-%m-%d')}")
         # fecha_ini = input("Fecha inicio (YYYY-MM-DD): ").strip()
         # fecha_fin = input("Fecha fin (YYYY-MM-DD): ").strip()
-        fecha_ini = "2025-01-01"
-        fecha_fin = "2025-03-31"
+        fecha_ini = "2025-07-01"
+        fecha_fin = "2025-08-31"
     print(f"Línea {inspect.currentframe().f_lineno}")
     #simbolo = select_simbolo()
     simbolo = "NQ"
