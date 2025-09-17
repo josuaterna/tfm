@@ -31,7 +31,7 @@ class LSTM_class():
         # ventana_historica = int(input("Ventana histórica (días): ").strip())
         ventana_historica = 30
         # actualizacion = int(input("Periodo de actualización (días): ").strip())
-        actualizacion = 1
+        actualizacion = 7
         start_date, end_date = pd.to_datetime(fecha_ini), pd.to_datetime(fecha_fin)
         hist_start = start_date - timedelta(days=ventana_historica)
         all_signals = []

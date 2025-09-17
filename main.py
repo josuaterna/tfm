@@ -36,13 +36,13 @@ def entrenamiento(modelo, simbolo, indicadores, fecha_ini, fecha_fin):
         print(f"\nFechas para backtesting: {datetime.now().strftime('%Y-%m-%d')}")
         # fecha_ini = input("Fecha inicio (YYYY-MM-DD): ").strip()
         # fecha_fin = input("Fecha fin (YYYY-MM-DD): ").strip()
-        fecha_ini_back = "2025-08-01"
-        fecha_fin_back = "2025-08-31"
+        fecha_ini_back = "2025-09-01"
+        fecha_fin_back = "2025-09-15"
         obj_svmnn.generar_json_senales(obj_svmnn.model, simbolo, fecha_ini_back, fecha_fin_back)
 
   
 def seniales_back(modelo, indicadores, fecha_ini, fecha_fin, ventana_historica, actualizacion):
-
+    
     pass
 
 def seniales_tr(modelo, indicadores, ventana_historica, actualizacion):
@@ -119,11 +119,11 @@ def main():
         print(f"\nFecha actual: {datetime.now().strftime('%Y-%m-%d')}")
         # fecha_ini = input("Fecha inicio (YYYY-MM-DD): ").strip()
         # fecha_fin = input("Fecha fin (YYYY-MM-DD): ").strip()
-        fecha_ini = "2025-07-01"
-        fecha_fin = "2025-08-31"
+        fecha_ini = "2025-08-15"
+        fecha_fin = "2025-09-15"
     print(f"Línea {inspect.currentframe().f_lineno}")
     #simbolo = select_simbolo()
-    simbolo = "NQ"
+    simbolo = "EURUSD"
     print(f"Línea {inspect.currentframe().f_lineno}")
     indicadores = select_indicadores()
     print(f"Línea {inspect.currentframe().f_lineno}")
