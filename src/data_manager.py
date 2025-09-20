@@ -76,6 +76,48 @@ class Datamanager:
         except Exception as e:
             print(f"ERROR: Error descargando datos {simbolo}: {e}")
             return None
+
+    def get_data_intervalos(self, simbolo, n=20, timeframe='M5'):
+        if not self.conectado:
+            if not self._conectar():
+                return None
+        
+        try:
+            timeframe_map = {
+                'M1': mt5.TIMEFRAME_M1,
+                'M5': mt5.TIMEFRAME_M5,
+                'M15': mt5.TIMEFRAME_M15,
+                'M30': mt5.TIMEFRAME_M30,
+                'H1': mt5.TIMEFRAME_H1,
+                'H4': mt5.TIMEFRAME_H4,
+                'D1': mt5.TIMEFRAME_D1
+            }
+            
+            mt5_timeframe = timeframe_map.get(timeframe, mt5.TIMEFRAME_M5)
+            mt5.symbol_select(simbolo, True)
+            # print("symbol_info:", mt5.symbol_info(simbolo))
+            # print("symbol_tick:", mt5.symbol_info_tick(simbolo))
+            print(f"Descargando últimos {n} registros de {simbolo}.")
+            rates = mt5.copy_rates_from_pos(simbolo, mt5_timeframe, 0, n)
+            
+            if rates is None:
+                error = mt5.last_error()
+                print(f"ERROR: Datos no disponibles {simbolo} - MT5 Error: {error}")
+                
+            if len(rates) == 0:
+                print(f"ERROR: Datos no recibidos {simbolo}")
+                return None
+            
+            df = pd.DataFrame(rates)
+            df['time'] = pd.to_datetime(df['time'], unit='s')
+            df.set_index('time', inplace=True)
+            
+            print(f"Recibidos {len(df)} registros de {simbolo}")
+            return df
+            
+        except Exception as e:
+            print(f"ERROR: Error descargando datos {simbolo}: {e}")
+            return None
         
 # Traer símbolos disponibles del broker
     def _simbolos_disponibles(self):

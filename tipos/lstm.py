@@ -8,8 +8,9 @@ import os
 import pywt # type: ignore
 import torch.nn as nn
 import matplotlib.pyplot as plt
+import time
 from typing import Tuple
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from torch.utils.data import Dataset, DataLoader, TensorDataset
 from sklearn.preprocessing import StandardScaler
 from sklearn.preprocessing import MinMaxScaler
@@ -19,19 +20,39 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from src.train import Trainer
 
 class LSTM_class():
-    def __init__(self, indicadores):
+    def __init__(self, indicadores, seq):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.entrenador = Trainer(indicadores)
         self.df_train = None
         self.model = None
         self.scaler = None
-        self.seq_len = 50
+        self.seq_len = seq
 
-    def lstm_train(self, simbolo, fecha_ini, fecha_fin):
-        # ventana_historica = int(input("Ventana histórica (días): ").strip())
-        ventana_historica = 30
-        # actualizacion = int(input("Periodo de actualización (días): ").strip())
-        actualizacion = 7
+    def lstm_train(self, simbolo, tiempo, fecha_ini, fecha_fin, ruta, th, fut_bar, bat):
+        ventana_historica = int(input("Ventana histórica (días): ").strip())
+        #ventana_historica = 30
+        #1.M1  2.M5  3.M15  4.M30  5.H1  6.H4  7.D1"
+        match tiempo:
+            case 1:
+                timeframe_var = "M1"
+            case 2:
+                timeframe_var = "M5"
+            case 3:
+                timeframe_var = "M15"
+            case 4:
+                timeframe_var = "M30"
+            case 5:
+                timeframe_var = "H1"
+            case 6:
+                timeframe_var = "H4"
+            case 7:
+                timeframe_var = "D1"
+            case _:
+                timeframe_var = "M5"
+
+
+        actualizacion = int(input("Periodo de actualización (días): ").strip())
+        #actualizacion = 7
         start_date, end_date = pd.to_datetime(fecha_ini), pd.to_datetime(fecha_fin)
         hist_start = start_date - timedelta(days=ventana_historica)
         all_signals = []
@@ -41,7 +62,7 @@ class LSTM_class():
             simbolo,
             hist_start.strftime("%Y-%m-%d"),
             end_date.strftime("%Y-%m-%d"),
-            timeframe="M5"
+            timeframe=timeframe_var
         )
         if self.df_train is None or len(self.df_train) < 500:
             print("ERROR: Insuficientes datos")
@@ -58,7 +79,7 @@ class LSTM_class():
                 current_test_start = current_test_end
                 continue
             # Reentrenar modelo
-            self.train_model(df_train, window_days=ventana_historica, batch_size=16, verbose=False)    
+            self.train_model(df_train, fut_bar, th, window_days=ventana_historica, batch_size=bat, verbose=False)    
             
             signals = self.generate_signals(df_test,simbolo)
             all_signals.extend(signals)
@@ -68,19 +89,19 @@ class LSTM_class():
             current_test_start = current_test_end
 
         # Guardar resultados
-        output_file = f"real_backtest_signals_{simbolo}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        #output_file = f"real_backtest_signals_{simbolo}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        output_file = os.path.join(ruta, f"real_backtest_signals_{simbolo}.json")
         with open(output_file, "w", encoding="utf-16-le") as f:
             json.dump(all_signals, f, indent=2)
 
         print(f"\n✅ Backtest terminado. Total señales: {len(all_signals)}")
         print(f"Archivo guardado en: {output_file}")
-
     
-    def train_model(self, df, window_days=60, epochs=5, batch_size=256, verbose=False):
+    def train_model(self, df, fut_bar, th, window_days=60, epochs=5, batch_size=256, verbose=False):
 
         df = df.tail(window_days * 288)  # 288 velas M5 ≈ 1 día
         features = self.build_feature_matrix_from_df(df)
-        labels = self.create_labels_from_prices(df['close'], future_bars=5, threshold=0.0001)
+        labels = self.create_labels_from_prices(df['close'], future_bars=fut_bar, threshold=th)
         
         if len(features) != len(labels):
             features, labels = features.align(pd.Series(labels, index=features.index), join="inner", axis=0)
@@ -91,12 +112,19 @@ class LSTM_class():
             epochs=epochs, batch_size=batch_size,
             device=self.device, verbose=verbose
         )
+        self.guardar(self.model,self.scaler)
 
     def guardar(self, modelo, scaler):
         torch.save(modelo.state_dict(), "lstm_model.pth")
         joblib.dump(scaler, "scaler.pkl")
 
     def cargar(self, modelo = "lstm_model.pth", scaler = "scaler.pkl"):
+        self.scaler = joblib.load(scaler)
+        self.model = LSTMClassifier(self.scaler.mean_.shape[0]).to(self.device)
+        self.model.load_state_dict(torch.load(modelo, map_location=self.device))
+        self.model.eval()
+
+    def cargar_ii(self, modelo = "lstm_model.pth", scaler = "scaler.pkl"):
         self.scaler = joblib.load(scaler)
         # Cargar modelo
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -120,6 +148,7 @@ class LSTM_class():
         with torch.no_grad():
             for i in range(len(X_scaled) - self.seq_len):
                 seq = torch.tensor(X_scaled[i:i+self.seq_len], dtype=torch.float32, device=self.device).unsqueeze(0)
+                seq.to(self.device)
                 output = self.model(seq)
                 probs = torch.softmax(output, dim=1)
                 signal = torch.argmax(output, dim=1).item() - 1  # {0:-1, 1:0, 2:1}
@@ -138,6 +167,102 @@ class LSTM_class():
                         "symbol": simbolo
                     })
         return signals
+
+    def run_realtime_lstm(self, simbolo, ruta, tiempo, modelo_path="lstm_model.pth", scaler_path="scaler.pkl"):
+        """
+        Ejecuta predicciones en vivo cada 5 minutos usando LSTM_class.
+        Guarda las señales en un archivo JSON único por símbolo.
+        """
+        match tiempo:
+            case 1:
+                timeframe_var = "M1"
+                lapso = 1
+            case 2:
+                timeframe_var = "M5"
+                lapso = 5
+            case 3:
+                timeframe_var = "M15"
+                lapso = 15
+            case 4:
+                timeframe_var = "M30"
+                lapso = 30
+            case 5:
+                timeframe_var = "H1"
+                lapso = 60
+            case 6:
+                timeframe_var = "H4"
+                lapso = 240
+            case 7:
+                timeframe_var = "D1"
+                lapso = 1440
+            case _:
+                timeframe_var = "M5"
+                lapso = 5
+
+        if self.model == None:
+            self.cargar(modelo=modelo_path, scaler=scaler_path)
+
+        print(f"✅ Modelo cargado en {self.device}. Esperando velas de {simbolo}...")
+
+        # Nombre del archivo de salida
+        output_file = os.path.join(ruta, f"signals_{simbolo.lower()}.json")
+
+        # Si ya existe, cargar señales previas; si no, crear lista vacía
+        # if os.path.exists(output_file):
+            # with open(output_file, "r", encoding="utf-16-le") as f:
+            #     try:
+            #         all_signals = json.load(f)
+            #     except json.JSONDecodeError:
+            #         all_signals = []
+        #else:
+        #    all_signals = []
+        all_signals = []
+        while True:
+            # Redondear al cierre de vela de 5m anterior en UTC
+            now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+            minute_offset = now.minute % lapso
+            last_candle_time = now - timedelta(minutes=minute_offset)
+
+            # Descargar datos recientes (ej: últimas 200 velas para features)
+            #self.entrenador.obj_datamanager._simbolos_disponibles()
+            df = self.entrenador.obj_datamanager.get_data_intervalos(
+                simbolo,
+                n=50,
+                # (last_candle_time - timedelta(hours=20)).strftime("%Y-%m-%d %H:%M:%S"),
+                # last_candle_time.strftime("%Y-%m-%d %H:%M:%S"),
+                timeframe=timeframe_var
+            )
+            #df.to_csv(os.path.join(ruta_csv, "USDJPY_export.csv"))
+            # df = pd.read_csv(os.path.join(ruta_csv, "USDJPY.csv"), index_col=0)
+            # df.index = pd.to_datetime(df.index)
+            # df = df.sort_index(ascending=True)
+
+            if df is None or len(df) < self.seq_len:
+                print("⚠️ No hay suficientes datos para generar secuencia.")
+            else:
+                # Generar señal solo para la última vela
+                signals = self.generate_signals(df, simbolo)
+                if signals:
+                    ultima = signals[-1]
+                    all_signals.append(ultima)
+
+                    # Guardar en archivo
+                    with open(output_file, "w", encoding="utf-16-le") as f:
+                        json.dump(all_signals, f, indent=2)
+
+                    print(f"📈 Señal guardada: {ultima['signal']} | "
+                        f"Conf={ultima['confidence']:.2f} | "
+                        f"Precio={ultima['price']} | "
+                        f"{ultima['timestamp']}")
+                else:
+                    print(f"ℹ️ Sin señal válida en {last_candle_time}")
+
+            # Esperar hasta el próximo cierre de vela
+            next_check = last_candle_time + timedelta(minutes=lapso)
+            sleep_seconds = (next_check - datetime.now(timezone.utc)).total_seconds()
+            if sleep_seconds > 0:
+                time.sleep(sleep_seconds)
+
     
     def train_lstm(self, X, y,
                seq_len=50,
@@ -149,11 +274,7 @@ class LSTM_class():
                verbose=True):
         if device is None:
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        # scale features (fit on train split later)
-        # Build sequences
         X_seq, y_seq = self.create_sequences(X, y, seq_len=seq_len)
-        # drop samples where label is 0 if you prefer binary (here keep all classes)
-        # split by indices to avoid leakage
         idx = np.arange(len(X_seq))
         train_idx, val_idx = train_test_split(idx, test_size=test_size, shuffle=True, stratify=y_seq)
         # scale on training set
